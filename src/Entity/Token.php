@@ -2,6 +2,7 @@
 
 namespace App\Entity;
 
+use Doctrine\DBAL\Types\Types;
 use Symfony\Component\Validator\Constraints as Assert;
 use App\Repository\TokenRepository;
 use Doctrine\ORM\Mapping as ORM;
@@ -14,7 +15,7 @@ class Token
     #[ORM\Column]
     private ?int $id = null;
 
-    #[ORM\Column(length: 255)]
+    #[ORM\Column(type: Types::TEXT)]
     private ?string $token = null;
 
     #[ORM\Column]
@@ -27,6 +28,9 @@ class Token
     #[ORM\ManyToOne(inversedBy: 'tokens')]
     #[ORM\JoinColumn(nullable: false)]
     private ?User $idUser = null;
+
+    #[ORM\Column]
+    private ?\DateTimeImmutable $expiredAt = null;
 
     public function getId(): ?int
     {
@@ -77,6 +81,18 @@ class Token
     public function setIdUser(?User $idUser): static
     {
         $this->idUser = $idUser;
+
+        return $this;
+    }
+
+    public function getExpiredAt(): ?\DateTimeImmutable
+    {
+        return $this->expiredAt;
+    }
+
+    public function setExpiredAt(\DateTimeImmutable $expiredAt): static
+    {
+        $this->expiredAt = $expiredAt;
 
         return $this;
     }

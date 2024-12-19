@@ -16,6 +16,17 @@ class TokenRepository extends ServiceEntityRepository
         parent::__construct($registry, Token::class);
     }
 
+    public function findValidToken(string $tokenValue,string $type)
+    {
+        return $this->createQueryBuilder('t')
+            ->andWhere('t.token = :token')
+            ->andWhere('t.type = :type')
+            ->setParameter('token', $tokenValue)
+            ->setParameter('type', $type)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
+
 //    /**
 //     * @return Token[] Returns an array of Token objects
 //     */
