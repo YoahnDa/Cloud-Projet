@@ -8,7 +8,7 @@ use App\Repository\EmailRepository;
 use Doctrine\ORM\Mapping as ORM;
 
 #[ORM\Entity(repositoryClass: EmailRepository::class)]
-#[UniqueEntity(fields: ['email'], message: 'Cet email est déjà utilisé.')]
+#[UniqueEntity(fields: ['value'], message: 'Cet email est déjà utilisé.')]
 class Email
 {
     #[ORM\Id]
