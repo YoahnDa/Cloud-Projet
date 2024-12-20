@@ -3,6 +3,7 @@
 namespace App\Entity;
 
 use Symfony\Component\Validator\Constraints as Assert;
+use Symfony\Component\Serializer\Annotation\Groups;
 use Symfony\Bridge\Doctrine\Validator\Constraints\UniqueEntity;
 use App\Repository\EmailRepository;
 use Doctrine\ORM\Mapping as ORM;
@@ -22,6 +23,7 @@ class Email
     #[ORM\Column(length: 255 , unique: true)]
     #[Assert\Email(message: 'Veuillez entrer un email valide.')]
     #[Assert\NotBlank(message: "Email obligatoire")]
+    #[Groups(["getUser"])]
     private ?string $value = null;
 
     #[ORM\OneToOne(mappedBy: 'idEmail', cascade: ['persist', 'remove'])]

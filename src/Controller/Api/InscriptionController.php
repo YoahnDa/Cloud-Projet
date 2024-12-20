@@ -83,7 +83,6 @@ class InscriptionController extends AbstractController
             return new JsonResponse($serializer->serialize($errorUser, 'json'), JsonResponse::HTTP_BAD_REQUEST, [] , true);
         }
 
-        // Validez les deux entités avant de les persister
         $entity->persist($email);
         $entity->persist($user);
         $entity->flush();
@@ -157,13 +156,13 @@ class InscriptionController extends AbstractController
         $token = $request->get('token');
 
         if(!$token) {
-            return new JsonResponse(['error' => 'Token manquante'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return new JsonResponse(['error' => 'L\'url est endommagé.'], JsonResponse::HTTP_BAD_REQUEST);
         }
 
         $tokenBase = $entity->getRepository(Token::class)->findValidToken($token,'VER');
 
         if(!$tokenBase) {
-            return new JsonResponse(['error' => 'Token non valide'], JsonResponse::HTTP_INTERNAL_SERVER_ERROR);
+            return new JsonResponse(['error' => 'Token non valide'], JsonResponse::HTTP_BAD_REQUEST);
         }
 
         $userReal = $tokenBase->getIdUser();
