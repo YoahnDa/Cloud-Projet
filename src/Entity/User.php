@@ -50,9 +50,16 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     #[ORM\OneToMany(targetEntity: Token::class, mappedBy: 'idUser', orphanRemoval: true)]
     private Collection $tokens;
 
+    /**
+     * @var Collection<int, AuthPin>
+     */
+    #[ORM\OneToMany(targetEntity: AuthPin::class, mappedBy: 'userId', orphanRemoval: true)]
+    private Collection $authPins;
+
     public function __construct()
     {
         $this->tokens = new ArrayCollection();
+        $this->authPins = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -178,6 +185,36 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
             // set the owning side to null (unless already changed)
             if ($token->getIdUser() === $this) {
                 $token->setIdUser(null);
+            }
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return Collection<int, AuthPin>
+     */
+    public function getAuthPins(): Collection
+    {
+        return $this->authPins;
+    }
+
+    public function addAuthPin(AuthPin $authPin): static
+    {
+        if (!$this->authPins->contains($authPin)) {
+            $this->authPins->add($authPin);
+            $authPin->setUserId($this);
+        }
+
+        return $this;
+    }
+
+    public function removeAuthPin(AuthPin $authPin): static
+    {
+        if ($this->authPins->removeElement($authPin)) {
+            // set the owning side to null (unless already changed)
+            if ($authPin->getUserId() === $this) {
+                $authPin->setUserId(null);
             }
         }
 

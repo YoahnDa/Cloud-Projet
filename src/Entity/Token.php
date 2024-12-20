@@ -29,7 +29,7 @@ class Token
     #[ORM\JoinColumn(nullable: false)]
     private ?User $idUser = null;
 
-    #[ORM\Column]
+    #[ORM\Column(nullable : true)]
     private ?\DateTimeImmutable $expiredAt = null;
 
     public function getId(): ?int

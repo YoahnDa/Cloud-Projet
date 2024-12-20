@@ -3,6 +3,8 @@
 namespace App\Repository;
 
 use App\Entity\Token;
+use App\Entity\User;
+use DateTimeImmutable;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
@@ -21,8 +23,22 @@ class TokenRepository extends ServiceEntityRepository
         return $this->createQueryBuilder('t')
             ->andWhere('t.token = :token')
             ->andWhere('t.type = :type')
+            ->andWhere('t.expiredAt > :now')
             ->setParameter('token', $tokenValue)
             ->setParameter('type', $type)
+            ->setParameter('now', new DateTimeImmutable())
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
+
+    public function findAuthToken(User $user , string $type = 'AUTH')
+    {
+        return $this->createQueryBuilder('t')
+            ->andWhere('t.idUser = :user')
+            ->andWhere('t.type = :type')
+            ->setParameter('user', $user)
+            ->setParameter('type', $type)
+            ->setMaxResults(1)
             ->getQuery()
             ->getOneOrNullResult();
     }
