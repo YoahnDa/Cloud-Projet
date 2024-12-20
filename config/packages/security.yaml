@@ -37,7 +37,6 @@ security:
         - { path: ^/api/doc, roles: PUBLIC_ACCESS }
         - { path: ^/api/inscription, roles: PUBLIC_ACCESS }
         - { path: ^/api/verification, roles: PUBLIC_ACCESS }
-        - { path: ^/api/user, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:
     security:
