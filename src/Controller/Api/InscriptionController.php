@@ -25,6 +25,37 @@ use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTTokenManagerInterface;
 class InscriptionController extends AbstractController
 {
 
+    /**
+     * Insertion des information pour avoir l'email de confirmation.
+     * 
+     * @Route("/api/inscription", name="app_api_inscription", methods={"POST"})
+     * @OA\Post(
+     *     path="/api/inscription",
+     *     summary="Inscription d'un utilisateur",
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="email", type="string", example="user@example.com"),
+     *             @OA\Property(property="password", type="string", example="password123"),
+     *             @OA\Property(property="username", type="string", example="username123")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Email de vérification envoyé.",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="message", type="string", example="Un email envoyer à user@example.com")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=400,
+     *         description="Validation échouée.",
+     *         @OA\JsonContent(type="object")
+     *     )
+     * )
+     */
     #[Route('/api/inscription', name: 'app_api_inscription', methods : ['POST'])]
     public function inscription(Request $request , ValidatorInterface $validator , UserPasswordHasherInterface $passwordEncoder , SerializerInterface $serializer , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity , UrlGeneratorInterface $urlGenerator , MailerInterface $mailer): JsonResponse
     {
@@ -92,6 +123,34 @@ class InscriptionController extends AbstractController
         return new JsonResponse(['message' => 'Un email envoyer à '. $email->getValue()],Response::HTTP_OK, []);
     }
 
+    /**
+     *  Verification de l'email.
+     * @Route("/api/verification/{token}", name="app_api_verification", methods={"GET"})
+     * @OA\Get(
+     *     path="/api/verification/{token}",
+     *     summary="Vérification d'un email via un token",
+     *     @OA\Parameter(
+     *         name="token",
+     *         in="path",
+     *         description="Token de vérification",
+     *         required=true,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=202,
+     *         description="Email validé avec succès.",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="message", type="string", example="Votre email a été bien validé.")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=400,
+     *         description="Erreur de validation ou expiration.",
+     *         @OA\JsonContent(type="object")
+     *     )
+     * )
+     */
     #[Route('/api/verification/{token}', name: 'app_api_verification' , methods:['GET'])]
     public function verification(Request $request , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity): JsonResponse
     {
@@ -110,6 +169,7 @@ class InscriptionController extends AbstractController
         $userReal = $tokenBase->getIdUser();
 
         // Obtenir le timestamp actuel
+        $dateCreate = new DateTimeImmutable();
         $currentTimestamp = time();
         $expirationTimestamp = ($tokenBase->getExpiredAt())->getTimestamp();
 
@@ -131,6 +191,21 @@ class InscriptionController extends AbstractController
             'iat' => ($tokenBase->getCreatedAt())->getTimestamp()
         ];
 
+        if(!($entity->getRepository(Token::class)->findAuthToken($userReal))){
+            $payLoadAuth = [
+                'id' => $userReal->getId(),
+                'iat' => $dateCreate->getTimestamp()
+            ];
+    
+            $tokenAuth = new Token();
+            $tokenAuth->setIdUser($userReal);
+            $tokenAuth->setType('AUTH');
+            $tokenAuth->setCreatedAt($dateCreate);
+            $tokenAuth->setToken($jwtManager->createFromPayload($userReal,$payLoadAuth));
+
+            $entity->persist($tokenAuth);
+        }
+
         $tokenNew = $jwtManager->createFromPayload($userReal,$newPayload);
         $tokenBase -> setToken($tokenNew);
 
@@ -138,6 +213,6 @@ class InscriptionController extends AbstractController
         $entity->persist($tokenBase);
         $entity->flush();
 
-        return new JsonResponse(['message' => 'Votre email a été bien modifier.'], JsonResponse::HTTP_ACCEPTED);
+        return new JsonResponse(['message' => 'Votre email a été bien valider.'], JsonResponse::HTTP_ACCEPTED);
     }
 }
