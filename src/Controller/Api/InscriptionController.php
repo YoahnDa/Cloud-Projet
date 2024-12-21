@@ -7,9 +7,9 @@ use Symfony\Component\Mime\Email; // pour le composant Mailer
 use App\Entity\Token;
 use App\Entity\User;
 use App\Repository\TokenRepository;
+use App\Service\EmailProvider;
 use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
-use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTManager;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -57,7 +57,7 @@ class InscriptionController extends AbstractController
      * )
      */
     #[Route('/api/inscription', name: 'app_api_inscription', methods : ['POST'])]
-    public function inscription(Request $request , ValidatorInterface $validator , UserPasswordHasherInterface $passwordEncoder , SerializerInterface $serializer , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity , UrlGeneratorInterface $urlGenerator , MailerInterface $mailer): JsonResponse
+    public function inscription(Request $request , ValidatorInterface $validator , UserPasswordHasherInterface $passwordEncoder , SerializerInterface $serializer , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity , UrlGeneratorInterface $urlGenerator , MailerInterface $mailer , EmailProvider $emailProvider): JsonResponse
     {
         $data = json_decode($request->getContent(), true);
 
@@ -87,43 +87,14 @@ class InscriptionController extends AbstractController
         $entity->persist($user);
         $entity->flush();
 
-        $dateCreate = new \DateTimeImmutable();
-        $dateExpired = $dateCreate->modify('+1 hour');
+        $emailProvider->sendEmailVerification($mailer,$entity,$jwtManager,$user,$urlGenerator,$email);
 
-        $payload = [
-            'id' => $user->getId(),
-            'isUsed' => false,
-            'iat' => $dateCreate->getTimestamp(),
-            'exp' => $dateExpired->getTimestamp(),
-        ];
-
-        $token = $jwtManager->createFromPayload($user,$payload);
-
-        $tokens = new Token();
-
-        $tokens->setIdUser($user);
-        $tokens->setToken($token);
-        $tokens->setCreatedAt($dateCreate);
-        $tokens->setExpiredAt($dateExpired);
-
-        $entity->persist($tokens);
-        
-        $entity->flush();
-
-        $location = $urlGenerator->generate('app_api_verification', ['token' => $token], UrlGeneratorInterface::ABSOLUTE_URL);
-
-        $emailMessage = (new Email())
-            ->from('yoahndaniel37@gmail.com')
-            ->to($email->getValue())
-            ->subject('Vérification de votre compte !')
-            ->text('Veuillez copier ce lien àfin d\'activer votre compte '.$location);
-
-        $mailer->send($emailMessage);
         return new JsonResponse(['message' => 'Un email envoyer à '. $email->getValue()],Response::HTTP_OK, []);
     }
 
     /**
      *  Verification de l'email.
+     * 
      * @Route("/api/verification/{token}", name="app_api_verification", methods={"GET"})
      * @OA\Get(
      *     path="/api/verification/{token}",
@@ -174,7 +145,7 @@ class InscriptionController extends AbstractController
 
         // Vérifier si le token est expiré
         if ($currentTimestamp > $expirationTimestamp) {
-            return new JsonResponse(['error' => 'Token est expiré.'], JsonResponse::HTTP_BAD_REQUEST);
+            return new JsonResponse(['error' => 'Session du lien est expiré.'], JsonResponse::HTTP_BAD_REQUEST);
         }
 
         if(($userReal->getIdEmail())->isVerified()){

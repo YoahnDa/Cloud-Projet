@@ -14,6 +14,7 @@ use Symfony\Component\Mime\Email;
 use App\Entity\Token;
 use App\Repository\AuthPinRepository;
 use App\Repository\TokenRepository;
+use App\Service\EmailProvider;
 use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTTokenManagerInterface;
@@ -68,7 +69,7 @@ class LoginController extends AbstractController
      * )
      */
     #[Route('/api/login', name: 'app_api_login', methods: ['POST'])]
-    public function login(Request $request, TokenRepository $tokenRepos , EntityManagerInterface $entity, UserRepository $userRepos, AuthPinRepository $authRepos, UserPasswordHasherInterface $passwordEncoder, JWTTokenManagerInterface $jwtManager, MailerInterface $mailer, UrlGeneratorInterface $urlGen , PasswordHasherFactoryInterface $passCrypt): JsonResponse
+    public function login(Request $request, TokenRepository $tokenRepos , EntityManagerInterface $entity, UserRepository $userRepos, AuthPinRepository $authRepos, UserPasswordHasherInterface $passwordEncoder, JWTTokenManagerInterface $jwtManager, MailerInterface $mailer, UrlGeneratorInterface $urlGen , PasswordHasherFactoryInterface $passCrypt , EmailProvider $emailProvider): JsonResponse
     {
         $data = json_decode($request->getContent(), true);
         $username = $data['username'] ?? null;
@@ -81,44 +82,13 @@ class LoginController extends AbstractController
         // Rechercher l'utilisateur en base de données
         $user = $userRepos->findOneByUsername($username);
         if ($user) {
-            if ($user->getTentative() >= 3) {
-                $tokenRein = $tokenRepos->findAuthToken($user,'REIN');
+            if ($user->getTentative() > 2) {
+                $tokenRein = $tokenRepos->findTokenUser($user,'REIN');
                 if($tokenRein){
-                    return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
+                    return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez utiliser le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
                 }else{
-                    $dateCreate = new DateTimeImmutable();
-                    $dateExpired = $dateCreate->modify('120 seconds');
-            
-                    $payload = [
-                        'id' => $user->getId(),
-                        'isReinit' => true,
-                        'iat' => $dateCreate->getTimestamp(),
-                        'exp' => $dateExpired->getTimestamp()
-                    ];
-            
-                    $token = $jwtManager->createFromPayload($user,$payload);
-            
-                    $tokens = new Token();
-            
-                    $tokens->setIdUser($user);
-                    $tokens->setToken($token);
-                    $tokens->setType('REIN');
-                    $tokens->setCreatedAt($dateCreate);
-                    $tokens->setExpiredAt($dateExpired);
-            
-                    $entity->persist($tokens);
-                    
-                    $entity->flush();
-
-                    $location = $location = $urlGen->generate('app_api_reinitialisation', ['token' => $token], UrlGeneratorInterface::ABSOLUTE_URL);
-
-                    $emailMessage = (new Email())
-                    ->from('yoahndaniel37@gmail.com')
-                    ->to(($user->getIdEmail())->getValue())
-                    ->subject('Réinitialisation du nombres de tentatives !')
-                    ->text('Veuillez copier ce lien àfin d\'activer votre compte '.$location);
-        
-                    $mailer->send($emailMessage);
+                    $emailProvider->sendEmailReinitialisation($mailer,$entity,$jwtManager,$user,$urlGen);
+                    return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
                 }
             } else if (!(($user->getIdEmail())->isVerified())) {
                 return new JsonResponse(['error' => 'Votre compte n\'est pas vérifié'], Response::HTTP_UNAUTHORIZED);
@@ -134,11 +104,15 @@ class LoginController extends AbstractController
             return new JsonResponse(['error' => 'Utilisateur ou mot de passe invalide.'], Response::HTTP_UNAUTHORIZED);
         }
 
-        $pin = random_int(10000, 99999); 
-    
-        $dateCreate = new DateTimeImmutable();
-
         $sessionUid = uniqid('session_',true);
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            $customLifetime = 3600;
+
+            ini_set('session.gc_maxlifetime', $customLifetime);
+            $params = session_get_cookie_params();
+            setcookie(session_name(), session_id(), time() + $customLifetime, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+            session_start();
+        }
 
         $session = $request -> getSession();
 
@@ -151,29 +125,7 @@ class LoginController extends AbstractController
                 return new JsonResponse(['error' => 'Vous avez encore un code PIN valide.'], Response::HTTP_UNAUTHORIZED);
             }
         }
-
-        $hasher = $passCrypt->getPasswordHasher(AuthPin::class);
-        $tokenPin = new AuthPin();
-        $tokenPin->setUserId($user);
-        $tokenPin->setCreatedAt($dateCreate);
-        $tokenPin->setExpiredAt($dateCreate->modify('+90 seconds')); 
-        $tokenPin->setHashedPin($hasher->hash($pin));
-        $tokenPin->setUsed(false);
-        $tokenPin->setSessionUid($session->get('session_id'));
-    
-        $entity->persist($tokenPin);
-        $entity->flush();
-    
-        $location = $urlGen->generate('app_api_pin_verification', [], UrlGeneratorInterface::ABSOLUTE_URL);
-    
-        $emailMessage = (new Email())
-            ->from('yoahndaniel37@gmail.com')
-            ->to(($user->getIdEmail())->getValue())
-            ->subject('Vérification de votre compte !')
-            ->text('Voici votre code à double authentification: ' . $pin . '.\nVeuillez l\'insérer sur ce lien ' . $location);
-    
-        $mailer->send($emailMessage);
-    
+        $emailProvider->sendPinValidation($mailer,$entity,$request,$user,$urlGen,$passCrypt);
         return new JsonResponse(['message' => 'Email envoyé à ' . ($user->getIdEmail())->getValue()], Response::HTTP_OK);
     }
     
@@ -219,7 +171,7 @@ class LoginController extends AbstractController
      * )
      */
     #[Route('/api/pin_verification', name: 'app_api_pin_verification' , methods : ['POST'])]
-    public function pin_verify(Request $request , EntityManagerInterface $entity , PasswordHasherFactoryInterface $factory , AuthPinRepository $authRepos , TokenRepository $tokenRepos , JWTTokenManagerInterface $jwtManager , UrlGeneratorInterface $urlGen , MailerInterface $mailer): JsonResponse
+    public function pin_verify(Request $request , EntityManagerInterface $entity , PasswordHasherFactoryInterface $factory , AuthPinRepository $authRepos , TokenRepository $tokenRepos , JWTTokenManagerInterface $jwtManager , UrlGeneratorInterface $urlGen , MailerInterface $mailer , EmailProvider $emailProvider): JsonResponse
     {
         $data =  $data = json_decode($request->getContent(), true);
         if(!$data['pin']) {
@@ -237,51 +189,19 @@ class LoginController extends AbstractController
         $pinAuth = $authRepos -> findValidPinForSession($sessionUid);
 
         if(!$pinAuth){
-            return new JsonResponse(['error' => 'PIN Expiré ou Inexistante.'.$sessionUid], Response::HTTP_UNAUTHORIZED);
+            return new JsonResponse(['error' => 'PIN Expiré ou Inexistante.'], Response::HTTP_UNAUTHORIZED);
         }
 
         $user = $pinAuth->getUserId();
 
-        if($user->getTentative()>=3){
-            $tokenRein = $tokenRepos->findAuthToken($user,'REIN');
+        if($user->getTentative() > 2){
+            $tokenRein = $tokenRepos->findTokenUser($user,'REIN');
             if($tokenRein){
-                return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
+                return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez utiliser le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
             }else{
-                $dateCreate = new DateTimeImmutable();
-                $dateExpired = $dateCreate->modify('120 seconds');
-        
-                $payload = [
-                    'id' => $user->getId(),
-                    'isReinit' => false,
-                    'iat' => $dateCreate->getTimestamp(),
-                    'exp' => $dateExpired->getTimestamp()
-                ];
-        
-                $token = $jwtManager->createFromPayload($user,$payload);
-        
-                $tokens = new Token();
-        
-                $tokens->setIdUser($user);
-                $tokens->setToken($token);
-                $tokens->setType('REIN');
-                $tokens->setCreatedAt($dateCreate);
-                $tokens->setExpiredAt($dateExpired);
-        
-                $entity->persist($tokens);
-                
-                $entity->flush();
-
-                $location = $location = $urlGen->generate('app_api_reinitialisation', ['token' => $token], UrlGeneratorInterface::ABSOLUTE_URL);
-                
-                $emailMessage = (new Email())
-                ->from('yoahndaniel37@gmail.com')
-                ->to(($user->getIdEmail())->getValue())
-                ->subject('Réinitialisation du nombres de tentatives !')
-                ->text('Veuillez copier ce lien àfin de réactiver votre compte '.$location);
-    
-                $mailer->send($emailMessage);
+                $emailProvider->sendEmailReinitialisation($mailer,$entity,$jwtManager,$user,$urlGen);
+                return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
             }
-            return new JsonResponse(['error' => 'Nombres de tentatives limités.'], Response::HTTP_UNAUTHORIZED);
         }
 
         $hasher = $factory->getPasswordHasher(AuthPin::class);
@@ -291,7 +211,6 @@ class LoginController extends AbstractController
         if(!$authentification){
             $user->setTentative($user->getTentative() + 1);
             $entity->persist($user);
-            $pinAuth->setUsed(true);
             $entity->persist($pinAuth);
             $entity->flush();
             return new JsonResponse(['error' => 'PIN Invalide.'], Response::HTTP_UNAUTHORIZED);
@@ -321,21 +240,15 @@ class LoginController extends AbstractController
             $entity->flush();
         }
 
-        $customLifetime = 3600;
-
-        ini_set('session.gc_maxlifetime', $customLifetime);
-        $params = session_get_cookie_params();
-        setcookie(session_name(), session_id(), time() + $customLifetime, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-
         return new JsonResponse(['token' => $token->getToken()], Response::HTTP_OK);
     }
 
    /**
-     *  Verification de l'email.
+     *  Reinitialisation du nombre de tentative de l'email.
      * @Route("/api/reinitialisation/{token}", name="app_api_reinitialisation", methods={"GET"})
      * @OA\Get(
      *     path="/api/reinitialisation/{token}",
-     *     summary="Vérification d'un email via un token",
+     *     summary="Reinitialisation du nombre de tentative via un token",
      *     @OA\Parameter(
      *         name="token",
      *         in="path",
@@ -363,6 +276,7 @@ class LoginController extends AbstractController
     public function reinitialisation(Request $request , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity): JsonResponse
     {
         $token = $request->get('token');
+        $dateExpired = new DateTimeImmutable();
 
         if(!$token) {
             return new JsonResponse(['error' => 'L\'url est endommagé.'], JsonResponse::HTTP_BAD_REQUEST);
@@ -371,7 +285,7 @@ class LoginController extends AbstractController
         $tokenBase = $entity->getRepository(Token::class)->findValidToken($token,'REIN');
 
         if(!$tokenBase) {
-            return new JsonResponse(['error' => 'Token de reinitialisation non valide'], JsonResponse::HTTP_BAD_REQUEST);
+            return new JsonResponse(['error' => 'Token de reinitialisation non valide ou expiré'], JsonResponse::HTTP_BAD_REQUEST);
         }
 
         $user = $tokenBase->getIdUser();
@@ -384,6 +298,7 @@ class LoginController extends AbstractController
         $token = $jwtManager->createFromPayload($user,$payload);
 
         $tokenBase->setToken($token);
+        $tokenBase->setExpiredAt($dateExpired);
 
         $entity->persist($tokenBase);
         $user->setTentative(0);

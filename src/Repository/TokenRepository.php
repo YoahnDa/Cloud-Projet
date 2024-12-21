@@ -31,6 +31,20 @@ class TokenRepository extends ServiceEntityRepository
             ->getOneOrNullResult();
     }
 
+    public function findTokenUser(User $user , string $type = 'AUTH')
+    {
+        return $this->createQueryBuilder('t')
+            ->andWhere('t.idUser = :user')
+            ->andWhere('t.type = :type')
+            ->andWhere('t.expiredAt > :now')
+            ->setParameter('user', $user)
+            ->setParameter('type', $type)
+            ->setParameter('now', new DateTimeImmutable())
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+    }
+
     public function findTokenAuth(string $tokenValue,string $type = 'AUTH')
     {
         return $this->createQueryBuilder('t')
