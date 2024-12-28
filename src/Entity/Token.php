@@ -32,6 +32,9 @@ class Token
     #[ORM\Column(nullable : true)]
     private ?\DateTimeImmutable $expiredAt = null;
 
+    #[ORM\Column]
+    private ?bool $isUsed = false;
+
     public function getId(): ?int
     {
         return $this->id;
@@ -93,6 +96,18 @@ class Token
     public function setExpiredAt(\DateTimeImmutable $expiredAt): static
     {
         $this->expiredAt = $expiredAt;
+
+        return $this;
+    }
+
+    public function isUsed(): ?bool
+    {
+        return $this->isUsed;
+    }
+
+    public function setUsed(bool $isUsed): static
+    {
+        $this->isUsed = $isUsed;
 
         return $this;
     }
