@@ -32,6 +32,20 @@ class AuthPinRepository extends ServiceEntityRepository
         return $qb->getQuery()->getOneOrNullResult();
     }
 
+    public function findAllValidPinSession(string $sessionId): ?AuthPin
+    {
+        $qb = $this->createQueryBuilder('p');
+
+        $qb->where('p.sessionUid = :sessionId')
+            ->andWhere('p.expiredAt > :now') // Vérifie que le code n'est pas expiré.
+            ->andWhere('p.isUsed = false')  // Vérifie que le code n'a pas été utilisé.
+            ->setParameter('sessionId', $sessionId)
+            ->setParameter('now', new DateTimeImmutable())
+            ->orderBy('p.createdAt', 'DESC');
+
+        return $qb->getQuery()->getOneOrNullResult();
+    }
+
     //    /**
     //     * @return AuthPin[] Returns an array of AuthPin objects
     //     */

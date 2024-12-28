@@ -109,10 +109,6 @@ class InscriptionController extends AbstractController
      *     @OA\Response(
      *         response=202,
      *         description="Email validé avec succès.",
-     *         @OA\JsonContent(
-     *             type="object",
-     *             @OA\Property(property="message", type="string", example="Votre email a été bien validé.")
-     *         )
      *     ),
      *     @OA\Response(
      *         response=400,
@@ -122,18 +118,24 @@ class InscriptionController extends AbstractController
      * )
      */
     #[Route('/api/verification/{token}', name: 'app_api_verification' , methods:['GET'])]
-    public function verification(Request $request , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity): JsonResponse
+    public function verification(Request $request , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity): Response
     {
         $token = $request->get('token');
 
         if(!$token) {
-            return new JsonResponse(['error' => 'L\'url est endommagé.'], JsonResponse::HTTP_BAD_REQUEST);
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'L\'url est endommagé.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
         $tokenBase = $entity->getRepository(Token::class)->findValidToken($token,'VER');
 
         if(!$tokenBase) {
-            return new JsonResponse(['error' => 'Token non valide'], JsonResponse::HTTP_BAD_REQUEST);
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'Token non valide.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
         $userReal = $tokenBase->getIdUser();
@@ -145,11 +147,17 @@ class InscriptionController extends AbstractController
 
         // Vérifier si le token est expiré
         if ($currentTimestamp > $expirationTimestamp) {
-            return new JsonResponse(['error' => 'Session du lien est expiré.'], JsonResponse::HTTP_BAD_REQUEST);
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'Session du lien est expiré.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
         if(($userReal->getIdEmail())->isVerified()){
-            return new JsonResponse(['error' => 'Votre email a déjà été validé.'], JsonResponse::HTTP_BAD_REQUEST);
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'Votre email a déjà été vérifié.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
         ($userReal->getIdEmail())->setVerified(true);
@@ -178,11 +186,17 @@ class InscriptionController extends AbstractController
 
         $tokenNew = $jwtManager->createFromPayload($userReal,$newPayload);
         $tokenBase -> setToken($tokenNew);
+        $tokenBase -> setUsed(true);
 
         $entity->persist($userReal);
         $entity->persist($tokenBase);
         $entity->flush();
+        
+        return $this->render('success/link_success.html.twig',[
+            'message' => 'Votre lien de vérification a été utilisé avec succès.',
+            'description' => 'Vous pouvez maintenant vous connectez !'
+        ]);
 
-        return new JsonResponse(['message' => 'Votre email a été bien valider.'], JsonResponse::HTTP_ACCEPTED);
+        // return new JsonResponse(['message' => 'Votre email a été bien valider.'], JsonResponse::HTTP_ACCEPTED);
     }
 }

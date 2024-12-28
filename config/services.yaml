@@ -8,6 +8,11 @@ parameters:
 services:
     App\Services\VerificationToken: ~
     App\Services\EmailProvider: ~
+    App\EventSubscriber\UserRequestsSubscriber:
+        arguments:
+            - '@router'  # Injection du service du routeur pour générer l'URL de redirection
+        tags:
+            - { name: 'kernel.event_subscriber' }
     # default configuration for services in *this* file
     _defaults:
         autowire: true      # Automatically injects dependencies in your services.

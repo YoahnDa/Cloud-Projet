@@ -15,6 +15,7 @@ use App\Entity\Token;
 use App\Repository\AuthPinRepository;
 use App\Repository\TokenRepository;
 use App\Service\EmailProvider;
+use App\Service\VerificationToken;
 use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 use Lexik\Bundle\JWTAuthenticationBundle\Services\JWTTokenManagerInterface;
@@ -27,6 +28,8 @@ use OpenApi\Annotations as OA;
 
 class LoginController extends AbstractController
 {
+
+    private $customLifetime = 3600;
     /**
      * Authentification initiale via email avec envoi d'un PIN.
      *
@@ -69,32 +72,33 @@ class LoginController extends AbstractController
      * )
      */
     #[Route('/api/login', name: 'app_api_login', methods: ['POST'])]
-    public function login(Request $request, TokenRepository $tokenRepos , EntityManagerInterface $entity, UserRepository $userRepos, AuthPinRepository $authRepos, UserPasswordHasherInterface $passwordEncoder, JWTTokenManagerInterface $jwtManager, MailerInterface $mailer, UrlGeneratorInterface $urlGen , PasswordHasherFactoryInterface $passCrypt , EmailProvider $emailProvider): JsonResponse
+    public function login(Request $request, TokenRepository $tokenRepos, EntityManagerInterface $entity, UserRepository $userRepos, AuthPinRepository $authRepos, UserPasswordHasherInterface $passwordEncoder, JWTTokenManagerInterface $jwtManager, MailerInterface $mailer, UrlGeneratorInterface $urlGen, PasswordHasherFactoryInterface $passCrypt, EmailProvider $emailProvider): JsonResponse
     {
         $data = json_decode($request->getContent(), true);
         $username = $data['username'] ?? null;
         $password = $data['password'] ?? null;
-    
+
         if (!$username || !$password) {
             return new JsonResponse(['error' => 'Username or password missing'], Response::HTTP_BAD_REQUEST);
         }
-    
+
         // Rechercher l'utilisateur en base de données
         $user = $userRepos->findOneByUsername($username);
         if ($user) {
             if ($user->getTentative() > 2) {
-                $tokenRein = $tokenRepos->findTokenUser($user,'REIN');
-                if($tokenRein){
+                $tokenRein = $tokenRepos->findTokenUser($user, 'REIN');
+                if ($tokenRein) {
                     return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez utiliser le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
-                }else{
-                    $emailProvider->sendEmailReinitialisation($mailer,$entity,$jwtManager,$user,$urlGen);
+                } else {
+                    // $verify->desactivePinToken($sessionUid,$user);
+                    $emailProvider->sendEmailReinitialisation($mailer, $entity, $jwtManager, $user, $urlGen);
                     return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
                 }
             } else if (!(($user->getIdEmail())->isVerified())) {
                 return new JsonResponse(['error' => 'Votre compte n\'est pas vérifié'], Response::HTTP_UNAUTHORIZED);
             }
         }
-    
+
         if (!$user || !$passwordEncoder->isPasswordValid($user, $password)) {
             if ($user) {
                 $user->setTentative($user->getTentative() + 1);
@@ -104,31 +108,23 @@ class LoginController extends AbstractController
             return new JsonResponse(['error' => 'Utilisateur ou mot de passe invalide.'], Response::HTTP_UNAUTHORIZED);
         }
 
-        $sessionUid = uniqid('session_',true);
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            $customLifetime = 3600;
+        $sessionUid = uniqid('session_', true);
 
-            ini_set('session.gc_maxlifetime', $customLifetime);
-            $params = session_get_cookie_params();
-            setcookie(session_name(), session_id(), time() + $customLifetime, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
-            session_start();
-        }
-
-        $session = $request -> getSession();
+        $session = $request->getSession();
 
         if (!($session->has('session_id'))) {
             $session->set('session_id', $sessionUid);
-        }else{
+        } else {
             $sessionId = $session->get('session_id');
-            $authPin = $authRepos -> findValidPinForSession($sessionId);
-            if($authPin){
+            $authPin = $authRepos->findValidPinForSession($sessionId);
+            if ($authPin) {
                 return new JsonResponse(['error' => 'Vous avez encore un code PIN valide.'], Response::HTTP_UNAUTHORIZED);
             }
         }
-        $emailProvider->sendPinValidation($mailer,$entity,$request,$user,$urlGen,$passCrypt);
+        $emailProvider->sendPinValidation($mailer, $entity, $request, $user, $urlGen, $passCrypt);
         return new JsonResponse(['message' => 'Email envoyé à ' . ($user->getIdEmail())->getValue()], Response::HTTP_OK);
     }
-    
+
 
     /**
      * Vérification du code PIN pour la deuxième authentification.
@@ -170,15 +166,15 @@ class LoginController extends AbstractController
      *     )
      * )
      */
-    #[Route('/api/pin_verification', name: 'app_api_pin_verification' , methods : ['POST'])]
-    public function pin_verify(Request $request , EntityManagerInterface $entity , PasswordHasherFactoryInterface $factory , AuthPinRepository $authRepos , TokenRepository $tokenRepos , JWTTokenManagerInterface $jwtManager , UrlGeneratorInterface $urlGen , MailerInterface $mailer , EmailProvider $emailProvider): JsonResponse
+    #[Route('/api/pin_verification', name: 'app_api_pin_verification', methods: ['POST'])]
+    public function pin_verify(Request $request, EntityManagerInterface $entity, PasswordHasherFactoryInterface $factory, AuthPinRepository $authRepos, TokenRepository $tokenRepos, JWTTokenManagerInterface $jwtManager, UrlGeneratorInterface $urlGen, MailerInterface $mailer, EmailProvider $emailProvider , VerificationToken $verify): JsonResponse
     {
         $data =  $data = json_decode($request->getContent(), true);
-        if(!$data['pin']) {
+        if (!$data['pin']) {
             return new JsonResponse(['error' => 'PIN Invalide.'], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
 
-        $session = $request -> getSession();
+        $session = $request->getSession();
 
         if (!$session->has('session_id')) {
             return new JsonResponse(['error' => 'Vous vous êtes pas encore connecté.'], Response::HTTP_INTERNAL_SERVER_ERROR);
@@ -186,29 +182,30 @@ class LoginController extends AbstractController
 
         $sessionUid = $session->get('session_id');
 
-        $pinAuth = $authRepos -> findValidPinForSession($sessionUid);
+        $pinAuth = $authRepos->findValidPinForSession($sessionUid);
 
-        if(!$pinAuth){
+        if (!$pinAuth) {
             return new JsonResponse(['error' => 'PIN Expiré ou Inexistante.'], Response::HTTP_UNAUTHORIZED);
         }
 
         $user = $pinAuth->getUserId();
 
-        if($user->getTentative() > 2){
-            $tokenRein = $tokenRepos->findTokenUser($user,'REIN');
-            if($tokenRein){
+        if ($user->getTentative() > 2) {
+            $tokenRein = $tokenRepos->findTokenUser($user, 'REIN');
+            if ($tokenRein) {
                 return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez utiliser le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
-            }else{
-                $emailProvider->sendEmailReinitialisation($mailer,$entity,$jwtManager,$user,$urlGen);
+            } else {
+                $verify->desactivePinToken($sessionUid,$user,$authRepos,$entity);
+                $emailProvider->sendEmailReinitialisation($mailer, $entity, $jwtManager, $user, $urlGen);
                 return new JsonResponse(['error' => 'Vous avez atteint la limite de tentative. Veuillez consulter le lien envoyer à votre email.'], Response::HTTP_UNAUTHORIZED);
             }
         }
 
         $hasher = $factory->getPasswordHasher(AuthPin::class);
 
-        $authentification = $hasher -> verify($pinAuth->getHashedPin(),$data['pin']);
+        $authentification = $hasher->verify($pinAuth->getHashedPin(), $data['pin']);
 
-        if(!$authentification){
+        if (!$authentification) {
             $user->setTentative($user->getTentative() + 1);
             $entity->persist($user);
             $entity->persist($pinAuth);
@@ -229,21 +226,32 @@ class LoginController extends AbstractController
                 'id' => $user->getId(),
                 'iat' => $dateCreate->getTimestamp()
             ];
-    
+
             $tokenAuth = new Token();
             $tokenAuth->setIdUser($user);
             $tokenAuth->setType('AUTH');
             $tokenAuth->setCreatedAt($dateCreate);
-            $tokenAuth->setToken($jwtManager->createFromPayload($user,$payLoadAuth));
+            $tokenAuth->setToken($jwtManager->createFromPayload($user, $payLoadAuth));
 
             $entity->persist($tokenAuth);
             $entity->flush();
         }
 
+        if (session_status() == PHP_SESSION_ACTIVE) {
+            session_destroy();
+        }
+
+        ini_set('session.gc_maxlifetime', $this->customLifetime);
+        $params = session_get_cookie_params();
+        setcookie(session_name(), session_id(), time() + $this->customLifetime, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+        session_start();
+        $session = $request->getSession();
+        $session->set('session_uid',$sessionUid);
+
         return new JsonResponse(['token' => $token->getToken()], Response::HTTP_OK);
     }
 
-   /**
+    /**
      *  Reinitialisation du nombre de tentative de l'email.
      * @Route("/api/reinitialisation/{token}", name="app_api_reinitialisation", methods={"GET"})
      * @OA\Get(
@@ -272,20 +280,26 @@ class LoginController extends AbstractController
      * )
      */
 
-    #[Route('/api/reinitialisation/{token}', name: 'app_api_reinitialisation' , methods:['GET'])]
-    public function reinitialisation(Request $request , JWTTokenManagerInterface $jwtManager , EntityManagerInterface $entity): JsonResponse
+    #[Route('/api/reinitialisation/{token}', name: 'app_api_reinitialisation', methods: ['GET'])]
+    public function reinitialisation(Request $request, JWTTokenManagerInterface $jwtManager, EntityManagerInterface $entity): Response
     {
         $token = $request->get('token');
         $dateExpired = new DateTimeImmutable();
 
-        if(!$token) {
-            return new JsonResponse(['error' => 'L\'url est endommagé.'], JsonResponse::HTTP_BAD_REQUEST);
+        if (!$token) {
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'L\'url est endommagé.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
-        $tokenBase = $entity->getRepository(Token::class)->findValidToken($token,'REIN');
+        $tokenBase = $entity->getRepository(Token::class)->findValidToken($token, 'REIN');
 
-        if(!$tokenBase) {
-            return new JsonResponse(['error' => 'Token de reinitialisation non valide ou expiré'], JsonResponse::HTTP_BAD_REQUEST);
+        if (!$tokenBase) {
+            return $this->render('error/link_error.html.twig' , [
+                'message' => 'Token de réintialisation non valide ou expiré.',
+                'status_code' => JsonResponse::HTTP_BAD_REQUEST
+            ]);
         }
 
         $user = $tokenBase->getIdUser();
@@ -295,16 +309,21 @@ class LoginController extends AbstractController
             'isReinit' => true,
         ];
 
-        $token = $jwtManager->createFromPayload($user,$payload);
+        $token = $jwtManager->createFromPayload($user, $payload);
 
         $tokenBase->setToken($token);
         $tokenBase->setExpiredAt($dateExpired);
+
+        $tokenBase -> setUsed(true);
 
         $entity->persist($tokenBase);
         $user->setTentative(0);
         $entity->persist($user);
         $entity->flush();
 
-        return new JsonResponse(['message' => 'Vous pouvez vous connecter.'], JsonResponse::HTTP_ACCEPTED);
+        return $this->render('success/link_success.html.twig',[
+            'message' => 'Votre lien de réinitialisation a été utilisé avec succès.',
+            'description' => 'Vous pouvez maintenant vous connectez !'
+        ]);
     }
 }
